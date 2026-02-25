@@ -1,0 +1,60 @@
+name: Deploy Flask to Elastic Beanstalk
+
+on:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    env:
+      AWS_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zip unzip curl
+
+      - name: Install AWS CLI v2
+        run: |
+          curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+          unzip awscliv2.zip
+          sudo ./aws/install --update
+          aws --version
+
+      - name: Zip application
+        run: |
+          zip -r app.zip application.py requirements.txt
+
+      - name: Find Elastic Beanstalk bucket
+        id: eb_bucket
+        run: |
+          BUCKET=$(aws s3api list-buckets \
+            --query "Buckets[?starts_with(Name, 'elasticbeanstalk-')].Name | [0]" \
+            --output text)
+          echo "BUCKET=$BUCKET" >> $GITHUB_ENV
+          echo "Using EB bucket: $BUCKET"
+
+      - name: Upload to S3
+        run: |
+          aws s3 cp app.zip s3://$BUCKET/app-${GITHUB_SHA}.zip
+
+      - name: Create Elastic Beanstalk application version
+        run: |
+          aws elasticbeanstalk create-application-version \
+            --application-name "cmtr-cqw6k7di-app" \
+            --version-label ${GITHUB_SHA} \
+            --source-bundle S3Bucket=$BUCKET,S3Key=app-${GITHUB_SHA}.zip
+
+      - name: Update Elastic Beanstalk environment
+        run: |
+          aws elasticbeanstalk update-environment \
+            --environment-name "cmtr-cqw6k7di-env" \
+            --version-label ${GITHUB_SHA}
